@@ -1013,7 +1013,8 @@ export default function App() {
             {!isLast && (
               <ResizeHandle
                 onDragStart={startX => {
-                  const startW = colWidths[colIdx] ?? col.width ?? 360
+                  const el = document.querySelector(`[data-col="${colIdx}"]`) as HTMLElement
+                  const startW = el?.getBoundingClientRect().width ?? colWidths[colIdx] ?? col.width ?? 360
                   colResizeRef.current = { colIdx, startX, startW }
                   document.body.style.cursor='col-resize'; document.body.style.userSelect='none'
                 }}
