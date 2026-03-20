@@ -43,7 +43,7 @@ export function ModelSelector({ selectedModel, onSelect, lang }: ModelSelectorPr
 
       {open && (
         <div style={{
-          position:'absolute', bottom:'calc(100% + 6px)', left:0,
+          position:'absolute', top:'calc(100% + 6px)', right:0,
           minWidth:200, borderRadius:12, overflow:'hidden',
           background:'#1A1A1E', border:`1px solid rgba(255,255,255,0.12)`,
           boxShadow:'0 8px 32px rgba(0,0,0,0.4)', zIndex:100,
