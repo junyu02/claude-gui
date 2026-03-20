@@ -11,12 +11,15 @@ export type PanelId =
   | 'progress'
 
 export interface ColumnConfig {
-  /** Top panel in this column */
-  top: PanelId
-  /** Optional second panel stacked below */
-  bottom?: PanelId
-  /** Fraction of height the top panel takes when both are set (0–1), default 0.5 */
-  splitRatio?: number
+  /** Ordered panels top→bottom, min length 1 */
+  panels: PanelId[]
+  /**
+   * Height fractions for panels[0..N-2].
+   * panels[N-1] gets the remainder: 1 - sum(splitRatios).
+   * Length must equal panels.length - 1.
+   * When omitted, panels are equally sized.
+   */
+  splitRatios?: number[]
   /** Pixel width of this column. undefined = flex:1 (takes remaining space) */
   width?: number
 }
@@ -59,8 +62,8 @@ export const LAYOUT_PRESETS: LayoutPreset[] = [
     layout: {
       sidebarWidth: 240,
       columns: [
-        { top: 'chat' },
-        { top: 'preview', width: 360 },
+        { panels: ['chat'] },
+        { panels: ['preview'], width: 360 },
       ],
     },
   },
@@ -71,8 +74,8 @@ export const LAYOUT_PRESETS: LayoutPreset[] = [
     layout: {
       sidebarWidth: 240,
       columns: [
-        { top: 'chat' },
-        { top: 'preview', bottom: 'terminal', width: 380, splitRatio: 0.55 },
+        { panels: ['chat'] },
+        { panels: ['preview', 'terminal'], splitRatios: [0.55], width: 380 },
       ],
     },
   },
@@ -83,8 +86,8 @@ export const LAYOUT_PRESETS: LayoutPreset[] = [
     layout: {
       sidebarWidth: 220,
       columns: [
-        { top: 'chat', bottom: 'terminal', splitRatio: 0.65 },
-        { top: 'preview', width: 380 },
+        { panels: ['chat', 'terminal'], splitRatios: [0.65] },
+        { panels: ['preview'], width: 380 },
       ],
     },
   },
@@ -95,8 +98,8 @@ export const LAYOUT_PRESETS: LayoutPreset[] = [
     layout: {
       sidebarWidth: 220,
       columns: [
-        { top: 'chat' },
-        { top: 'code', width: 420 },
+        { panels: ['chat'] },
+        { panels: ['code'], width: 420 },
       ],
     },
   },
@@ -107,9 +110,9 @@ export const LAYOUT_PRESETS: LayoutPreset[] = [
     layout: {
       sidebarWidth: 200,
       columns: [
-        { top: 'chat' },
-        { top: 'preview', width: 340 },
-        { top: 'terminal', width: 300 },
+        { panels: ['chat'] },
+        { panels: ['preview'], width: 340 },
+        { panels: ['terminal'], width: 300 },
       ],
     },
   },
@@ -120,25 +123,57 @@ export const LAYOUT_PRESETS: LayoutPreset[] = [
     layout: {
       sidebarWidth: 200,
       columns: [
-        { top: 'chat' },
+        { panels: ['chat'] },
       ],
     },
   },
 ]
 
+// ── Migration ─────────────────────────────────────────────────────────
+export function migrateLayout(raw: any): AppLayout {
+  if (!raw || typeof raw !== 'object') return LAYOUT_PRESETS[0].layout
+
+  const migrateCol = (c: any): ColumnConfig => {
+    // Already v3 format
+    if (Array.isArray(c.panels)) return c as ColumnConfig
+    // v2 format: {top, bottom?, splitRatio?, width?}
+    const panels: PanelId[] = [c.top, ...(c.bottom ? [c.bottom] : [])]
+    const splitRatios = c.bottom ? [c.splitRatio ?? 0.5] : undefined
+    return {
+      panels,
+      ...(splitRatios ? { splitRatios } : {}),
+      ...(c.width !== undefined ? { width: c.width } : {}),
+    }
+  }
+
+  return {
+    sidebarWidth: raw.sidebarWidth ?? 240,
+    ...(raw.sidebarBottom ? { sidebarBottom: raw.sidebarBottom } : {}),
+    ...(raw.sidebarSplitRatio != null ? { sidebarSplitRatio: raw.sidebarSplitRatio } : {}),
+    columns: Array.isArray(raw.columns) ? raw.columns.map(migrateCol) : LAYOUT_PRESETS[0].layout.columns,
+  }
+}
+
 // ── Persistence ───────────────────────────────────────────────────────
-const STORAGE_KEY = 'claude-gui-layout-v2'
+const STORAGE_KEY_V3 = 'claude-gui-layout-v3'
+const STORAGE_KEY_V2 = 'claude-gui-layout-v2'
 
 export function loadLayout(): AppLayout {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw) as AppLayout
+    const v3 = localStorage.getItem(STORAGE_KEY_V3)
+    if (v3) return migrateLayout(JSON.parse(v3))
+    const v2 = localStorage.getItem(STORAGE_KEY_V2)
+    if (v2) {
+      const migrated = migrateLayout(JSON.parse(v2))
+      localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(migrated))
+      return migrated
+    }
   } catch {}
   return LAYOUT_PRESETS[0].layout
 }
 
 export function saveLayout(layout: AppLayout): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(layout))
+    localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(layout))
   } catch {}
 }

@@ -281,15 +281,24 @@ export default function App() {
   // Column widths (runtime overrides, separate from layout.columns[i].width)
   const [colWidths, setColWidths] = useState<Record<number, number>>({})
 
-  // Row split ratios runtime overrides (keyed by column index; -1 = sidebar)
-  const [rowRatios, setRowRatios] = useState<Record<number, number>>({})
+  // Per-column panel ratios: Record<colIdx, number[]> — array of N fractions summing to 1
+  const [panelRatios, setPanelRatios] = useState<Record<number, number[]>>({})
+
+  // Sidebar split ratio runtime override
+  const [sidebarRatio, setSidebarRatio] = useState<number | null>(null)
 
   // Sidebar bottom row resize ref
   const sidebarRowResizeRef = useRef<{ startY: number; startRatio: number; sidebarH: number } | null>(null)
 
   // Active resize handles
   const colResizeRef = useRef<{ colIdx: number; startX: number; startW: number } | null>(null)
-  const rowResizeRef = useRef<{ colIdx: number; startY: number; startRatio: number; colHeight: number } | null>(null)
+  const rowResizeRef = useRef<{
+    colIdx: number
+    handleIdx: number   // index of gap (0 = between panels[0] and panels[1], etc.)
+    startY: number
+    startRatios: number[]
+    colHeight: number
+  } | null>(null)
 
   const extraPluginSkills = MARKETPLACE_PLUGINS
     .filter(p => installedPluginIds.includes(p.id) && !!p.skillCmd)
@@ -300,7 +309,8 @@ export default function App() {
     setLayout(l)
     saveLayout(l)
     setColWidths({})
-    setRowRatios({})
+    setPanelRatios({})
+    setSidebarRatio(null)
   }
 
   // ── Load registry ─────────────────────────────────────────────────
@@ -375,14 +385,19 @@ export default function App() {
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
   }, [])
 
-  // ── Row resize (vertical) ─────────────────────────────────────────
+  // ── Row resize (vertical, N-panel) ───────────────────────────────
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       const r = rowResizeRef.current
       if (!r) return
       const delta = e.clientY - r.startY
-      const newRatio = Math.max(0.2, Math.min(0.8, r.startRatio + delta / r.colHeight))
-      setRowRatios(prev => ({ ...prev, [r.colIdx]: newRatio }))
+      const ratios = [...r.startRatios]
+      const hi = r.handleIdx
+      const pairSum = ratios[hi] + ratios[hi + 1]
+      const newA = Math.max(0.1, Math.min(pairSum - 0.1, ratios[hi] + delta / r.colHeight))
+      ratios[hi] = newA
+      ratios[hi + 1] = pairSum - newA
+      setPanelRatios(prev => ({ ...prev, [r.colIdx]: ratios }))
     }
     const onUp = () => {
       rowResizeRef.current = null
@@ -400,7 +415,7 @@ export default function App() {
       if (!r) return
       const delta = e.clientY - r.startY
       const newRatio = Math.max(0.2, Math.min(0.8, r.startRatio + delta / r.sidebarH))
-      setRowRatios(prev => ({ ...prev, [-1]: newRatio }))
+      setSidebarRatio(newRatio)
     }
     const onUp = () => {
       sidebarRowResizeRef.current = null
@@ -430,7 +445,7 @@ export default function App() {
 
   // Auto-poll file
   useEffect(() => {
-    const hasCodePanel = layout.columns.some(c => c.top === 'code' || c.bottom === 'code')
+    const hasCodePanel = layout.columns.some(c => c.panels.includes('code'))
     if (!selectedFile || !hasCodePanel) return
     const id = setInterval(() => loadFile(selectedFile, fileMtime ?? undefined), 3000)
     return () => clearInterval(id)
@@ -638,54 +653,15 @@ export default function App() {
     extraPluginSkills,
   }
 
-  // ── Render a column ───────────────────────────────────────────────
-  const renderColumn = (col: ColumnConfig, colIdx: number) => {
-    const isChat   = col.top === 'chat' || col.bottom === 'chat'
-    const effectiveWidth = colWidths[colIdx] ?? col.width
-    const topRatio  = rowRatios[colIdx] ?? col.splitRatio ?? 0.5
-    const hasBottom = !!col.bottom
-
-    const columnStyle: React.CSSProperties = {
-      flex: effectiveWidth ? 0 : 1,
-      width: effectiveWidth,
-      minWidth: 180,
-      display:'flex', flexDirection:'column',
-      background: '#0C0C0F',
-      overflow: 'hidden',
-      position: 'relative',
+  // ── Get runtime panel ratios for a column ────────────────────────
+  const getRatios = (col: ColumnConfig, colIdx: number): number[] => {
+    const override = panelRatios[colIdx]
+    if (override && override.length === col.panels.length) return override
+    if (col.splitRatios && col.splitRatios.length === col.panels.length - 1) {
+      const last = Math.max(0.05, 1 - col.splitRatios.reduce((a, b) => a + b, 0))
+      return [...col.splitRatios, last]
     }
-
-    const renderPanelSlot = (id: PanelId, flexValue: number) => {
-      const isChatPanel = id === 'chat'
-      return (
-        <div style={{flex:flexValue, display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0}}>
-          {!isChatPanel && <PanelBar id={id} lang={lang}/>}
-          <div style={{flex:1, overflow:'auto', display:'flex', flexDirection:'column'}}>
-            {isChatPanel ? renderChatPanel() : <PanelContent id={id} props={sharedProps}/>}
-          </div>
-        </div>
-      )
-    }
-
-    return (
-      <div key={colIdx} style={columnStyle}>
-        {renderPanelSlot(col.top, hasBottom ? topRatio : 1)}
-        {hasBottom && col.bottom && (
-          <>
-            <RowResizeHandle onDragStart={() => {
-              const el = document.querySelector(`[data-col="${colIdx}"]`) as HTMLElement
-              const h = el?.getBoundingClientRect().height ?? 600
-              rowResizeRef.current = { colIdx, startY: 0, startRatio: topRatio, colHeight: h }
-              document.body.style.cursor='row-resize'; document.body.style.userSelect='none'
-              // capture start Y on next mousemove
-              const capture = (e: MouseEvent) => { if (rowResizeRef.current) rowResizeRef.current.startY = e.clientY; window.removeEventListener('mousemove', capture) }
-              window.addEventListener('mousemove', capture)
-            }}/>
-            {renderPanelSlot(col.bottom, 1 - topRatio)}
-          </>
-        )}
-      </div>
-    )
+    return Array(col.panels.length).fill(1 / col.panels.length)
   }
 
   // ── Chat panel ────────────────────────────────────────────────────
@@ -768,7 +744,7 @@ export default function App() {
       {/* ── Sidebar ── */}
       <aside data-sidebar style={{width:layout.sidebarWidth,flexShrink:0,display:'flex',flexDirection:'column',background:'#131316',overflow:'hidden',zIndex:1}}>
         {/* Top section — flex-sized so it shrinks when sidebarBottom is active */}
-        <div style={{flex: layout.sidebarBottom ? (rowRatios[-1] ?? layout.sidebarSplitRatio ?? 0.55) : 1, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
+        <div style={{flex: layout.sidebarBottom ? (sidebarRatio ?? layout.sidebarSplitRatio ?? 0.55) : 1, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
         {/* Sidebar header */}
         <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 10px 12px 8px',borderBottom:`1px solid ${B}`,flexShrink:0}}>
           <div style={{width:22,height:22,borderRadius:7,background:'#7C5CFC',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
@@ -855,6 +831,7 @@ export default function App() {
       {/* ── Sidebar bottom panel (optional) ── */}
       {layout.sidebarBottom && (() => {
         const sid = layout.sidebarBottom!
+        const topRatio = sidebarRatio ?? layout.sidebarSplitRatio ?? 0.55
         return (
           <>
             <RowResizeHandle onDragStart={() => {
@@ -862,7 +839,7 @@ export default function App() {
               const rect = el?.getBoundingClientRect()
               sidebarRowResizeRef.current = {
                 startY: 0,
-                startRatio: rowRatios[-1] ?? layout.sidebarSplitRatio ?? 0.55,
+                startRatio: topRatio,
                 sidebarH: rect?.height ?? 600,
               }
               document.body.style.cursor='row-resize'; document.body.style.userSelect='none'
@@ -872,7 +849,7 @@ export default function App() {
               }
               window.addEventListener('mousemove', cap)
             }}/>
-            <div style={{flex: 1-(rowRatios[-1] ?? layout.sidebarSplitRatio ?? 0.55), display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
+            <div style={{flex: 1 - topRatio, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
               <PanelBar id={sid} lang={lang}/>
               <div style={{flex:1, overflow:'auto', display:'flex', flexDirection:'column'}}>
                 <PanelContent id={sid} props={sharedProps}/>
@@ -913,36 +890,31 @@ export default function App() {
               }}
             >
               {(() => {
-                const topRatio  = rowRatios[colIdx] ?? col.splitRatio ?? 0.5
-                const hasBottom = !!col.bottom
-
-                const renderSlot = (id: PanelId, flexPct: number) => (
-                  <div style={{flex: flexPct, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
-                    {id !== 'chat' && <PanelBar id={id} lang={lang}/>}
-                    <div style={{flex:1, overflow:'auto', display:'flex', flexDirection:'column'}}>
-                      {id === 'chat' ? renderChatPanel() : <PanelContent id={id} props={sharedProps}/>}
-                    </div>
-                  </div>
-                )
-
-                return (
-                  <>
-                    {renderSlot(col.top, hasBottom ? topRatio : 1)}
-                    {hasBottom && col.bottom && (
-                      <>
-                        <RowResizeHandle onDragStart={() => {
-                          const el = document.querySelector(`[data-col="${colIdx}"]`) as HTMLElement
-                          const rect = el?.getBoundingClientRect()
-                          rowResizeRef.current = { colIdx, startY: 0, startRatio: topRatio, colHeight: rect?.height ?? 600 }
-                          document.body.style.cursor='row-resize'; document.body.style.userSelect='none'
-                          const cap = (e: MouseEvent) => { if (rowResizeRef.current) rowResizeRef.current.startY = e.clientY; window.removeEventListener('mousemove', cap) }
-                          window.addEventListener('mousemove', cap)
-                        }}/>
-                        {renderSlot(col.bottom, 1 - topRatio)}
-                      </>
+                const ratios = getRatios(col, colIdx)
+                return col.panels.map((panelId, pIdx) => (
+                  <React.Fragment key={panelId}>
+                    {pIdx > 0 && (
+                      <RowResizeHandle onDragStart={() => {
+                        const el = document.querySelector(`[data-col="${colIdx}"]`) as HTMLElement
+                        const rect = el?.getBoundingClientRect()
+                        rowResizeRef.current = {
+                          colIdx, handleIdx: pIdx - 1,
+                          startY: 0, startRatios: getRatios(col, colIdx),
+                          colHeight: rect?.height ?? 600,
+                        }
+                        document.body.style.cursor='row-resize'; document.body.style.userSelect='none'
+                        const cap = (e: MouseEvent) => { if (rowResizeRef.current) rowResizeRef.current.startY = e.clientY; window.removeEventListener('mousemove', cap) }
+                        window.addEventListener('mousemove', cap)
+                      }}/>
                     )}
-                  </>
-                )
+                    <div style={{flex: ratios[pIdx], display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
+                      {panelId !== 'chat' && <PanelBar id={panelId} lang={lang}/>}
+                      <div style={{flex:1, overflow:'auto', display:'flex', flexDirection:'column'}}>
+                        {panelId === 'chat' ? renderChatPanel() : <PanelContent id={panelId} props={sharedProps}/>}
+                      </div>
+                    </div>
+                  </React.Fragment>
+                ))
               })()}
             </div>
             {!isLast && (

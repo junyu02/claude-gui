@@ -40,7 +40,7 @@ function PanelPill({ id, lang, draggable, onDragStart, small }: {
 function DropSlot({ panelId, onDrop, onClear, lang, height, label }: {
   panelId: PanelId | undefined
   onDrop: (id: PanelId) => void
-  onClear: () => void
+  onClear?: () => void
   lang: Lang
   height?: number
   label?: string
@@ -61,7 +61,7 @@ function DropSlot({ panelId, onDrop, onClear, lang, height, label }: {
       style={{
         flex: height ? undefined : 1,
         height: height,
-        minHeight: 48,
+        minHeight: 44,
         borderRadius:10,
         border: dragOver
           ? '2px dashed rgba(124,92,252,0.6)'
@@ -77,32 +77,35 @@ function DropSlot({ panelId, onDrop, onClear, lang, height, label }: {
         position:'relative',
         transition:'all 0.15s',
         overflow:'hidden',
+        flexShrink: 0,
       }}
     >
       {panelId ? (
         <>
           <div style={{display:'flex', alignItems:'center', gap:6}}>
-            <span style={{fontSize:18}}>{m!.emoji}</span>
-            <span style={{fontSize:12, fontWeight:600, color:m!.color}}>
+            <span style={{fontSize:16}}>{m!.emoji}</span>
+            <span style={{fontSize:11, fontWeight:600, color:m!.color}}>
               {lang === 'zh' ? m!.label : m!.labelEn}
             </span>
           </div>
-          <button
-            onClick={onClear}
-            style={{
-              position:'absolute', top:4, right:4,
-              padding:3, borderRadius:5, border:'none',
-              background:'rgba(255,255,255,0.05)', color:'#50505A',
-              cursor:'pointer', display:'flex', alignItems:'center',
-            }}
-            onMouseEnter={e => (e.currentTarget.style.color = '#E63B2E')}
-            onMouseLeave={e => (e.currentTarget.style.color = '#50505A')}
-          >
-            <X size={10}/>
-          </button>
+          {onClear && (
+            <button
+              onClick={onClear}
+              style={{
+                position:'absolute', top:4, right:4,
+                padding:3, borderRadius:5, border:'none',
+                background:'rgba(255,255,255,0.05)', color:'#50505A',
+                cursor:'pointer', display:'flex', alignItems:'center',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = '#E63B2E')}
+              onMouseLeave={e => (e.currentTarget.style.color = '#50505A')}
+            >
+              <X size={10}/>
+            </button>
+          )}
         </>
       ) : (
-        <span style={{fontSize:11, color:'#3A3A42'}}>
+        <span style={{fontSize:10, color:'#3A3A42'}}>
           {label ?? (lang === 'zh' ? '拖入面板' : 'Drop panel')}
         </span>
       )}
@@ -111,35 +114,58 @@ function DropSlot({ panelId, onDrop, onClear, lang, height, label }: {
 }
 
 // ── Column card in canvas ─────────────────────────────────────────────
-function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove }: {
+function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove, availablePanels }: {
   col: ColumnConfig
   colIdx: number
   lang: Lang
   onUpdate: (updated: ColumnConfig) => void
   onRemove: () => void
   canRemove: boolean
+  availablePanels: PanelId[]
 }) {
-  const isChat = col.top === 'chat'
-
-  const setTop    = (id: PanelId) => onUpdate({ ...col, top: id })
-  const setBottom = (id: PanelId) => {
-    if (id === col.top) return // can't be same
-    onUpdate({ ...col, bottom: id })
-  }
-  const clearBottom = () => {
-    const { bottom: _, splitRatio: __, ...rest } = col
-    onUpdate(rest)
+  const setPanel = (i: number, id: PanelId) => {
+    if (col.panels.includes(id)) return
+    const panels = [...col.panels]
+    panels[i] = id
+    onUpdate({ ...col, panels })
   }
 
+  const clearSlot = (i: number) => {
+    const panels = col.panels.filter((_, j) => j !== i)
+    // Reset ratios to equal when panel count changes
+    onUpdate({ ...col, panels, splitRatios: undefined })
+  }
+
+  const addPanel = () => {
+    const next = availablePanels.find(id => !col.panels.includes(id))
+    if (!next) return
+    onUpdate({ ...col, panels: [...col.panels, next], splitRatios: undefined })
+  }
+
+  const setSplitRatio = (i: number, pct: number) => {
+    const n = col.panels.length
+    const ratios = col.splitRatios && col.splitRatios.length === n - 1
+      ? [...col.splitRatios]
+      : Array(n - 1).fill(Math.round(100 / n) / 100)
+    ratios[i] = pct / 100
+    onUpdate({ ...col, splitRatios: ratios })
+  }
+
+  const getRatioForSlider = (i: number): number => {
+    const n = col.panels.length
+    return col.splitRatios?.[i] ?? 1 / n
+  }
+
+  const setWidth = (w: number | undefined) => onUpdate({ ...col, width: w })
   const widthLabel = col.width === undefined
     ? (lang === 'zh' ? '弹性' : 'Flex')
     : `${col.width}px`
 
-  const setWidth = (w: number | undefined) => onUpdate({ ...col, width: w })
+  const canAddPanel = availablePanels.some(id => !col.panels.includes(id))
 
   return (
     <div style={{
-      display:'flex', flexDirection:'column', gap:6,
+      display:'flex', flexDirection:'column', gap:5,
       background:'#1A1A1E', border:`1px solid ${B}`,
       borderRadius:14, padding:10, minWidth:120, width:140,
       flexShrink:0,
@@ -158,41 +184,54 @@ function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove }: {
         )}
       </div>
 
-      {/* Top slot */}
-      <DropSlot
-        panelId={col.top}
-        onDrop={setTop}
-        onClear={() => {}} // top panel required
-        lang={lang}
-        label={lang === 'zh' ? '主面板' : 'Main'}
-      />
-
-      {/* Split ratio control */}
-      {col.bottom && (
-        <div style={{display:'flex', alignItems:'center', gap:4}}>
-          <span style={{fontSize:9, color:'#50505A'}}>
-            {Math.round((col.splitRatio ?? 0.5) * 100)}%
-          </span>
-          <input
-            type="range" min={20} max={80} step={5}
-            value={Math.round((col.splitRatio ?? 0.5) * 100)}
-            onChange={e => onUpdate({ ...col, splitRatio: Number(e.target.value) / 100 })}
-            style={{flex:1, accentColor:'#7C5CFC', height:3}}
+      {/* N panel slots with ratio sliders between them */}
+      {col.panels.map((panelId, i) => (
+        <React.Fragment key={i}>
+          <DropSlot
+            panelId={panelId}
+            onDrop={id => setPanel(i, id)}
+            onClear={i === 0 && col.panels.length === 1 ? undefined : () => clearSlot(i)}
+            lang={lang}
+            label={i === 0 ? (lang === 'zh' ? '主面板' : 'Main') : (lang === 'zh' ? '拖入面板' : 'Drop panel')}
           />
-        </div>
+          {/* Ratio slider between this slot and the next */}
+          {i < col.panels.length - 1 && (
+            <div style={{display:'flex', alignItems:'center', gap:4}}>
+              <span style={{fontSize:9, color:'#50505A', minWidth:24, textAlign:'right'}}>
+                {Math.round(getRatioForSlider(i) * 100)}%
+              </span>
+              <input
+                type="range" min={10} max={80} step={5}
+                value={Math.round(getRatioForSlider(i) * 100)}
+                onChange={e => setSplitRatio(i, Number(e.target.value))}
+                style={{flex:1, accentColor:'#7C5CFC', height:3}}
+              />
+            </div>
+          )}
+        </React.Fragment>
+      ))}
+
+      {/* Add panel button */}
+      {canAddPanel && (
+        <button
+          onClick={addPanel}
+          style={{
+            display:'flex', alignItems:'center', justifyContent:'center', gap:4,
+            padding:'5px 8px', borderRadius:8, flexShrink:0,
+            border:`1.5px dashed rgba(255,255,255,0.1)`,
+            background:'transparent', color:'#3A3A42',
+            fontSize:10, cursor:'pointer', transition:'all 0.15s',
+          }}
+          onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(124,92,252,0.35)';e.currentTarget.style.color='#9B82FF'}}
+          onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,0.1)';e.currentTarget.style.color='#3A3A42'}}
+        >
+          <Plus size={10}/>
+          {lang === 'zh' ? '叠加面板' : 'Stack panel'}
+        </button>
       )}
 
-      {/* Bottom slot */}
-      <DropSlot
-        panelId={col.bottom}
-        onDrop={setBottom}
-        onClear={clearBottom}
-        lang={lang}
-        label={lang === 'zh' ? '+ 下方面板' : '+ Bottom panel'}
-      />
-
       {/* Width control */}
-      <div style={{marginTop:4}}>
+      <div style={{marginTop:2}}>
         <div style={{fontSize:9, color:'#50505A', marginBottom:4}}>
           {lang === 'zh' ? '宽度' : 'Width'}: {widthLabel}
         </div>
@@ -216,7 +255,6 @@ function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove }: {
 
 // ── Layout preview thumbnail ──────────────────────────────────────────
 function LayoutThumb({ layout, active }: { layout: AppLayout; active: boolean }) {
-  const totalCols = layout.columns.length
   return (
     <div style={{
       display:'flex', gap:2, height:36, padding:3,
@@ -230,17 +268,24 @@ function LayoutThumb({ layout, active }: { layout: AppLayout; active: boolean })
         {layout.sidebarBottom && <div style={{flex: 1-(layout.sidebarSplitRatio??0.55), background:`${PANEL_META[layout.sidebarBottom].color}50`, borderRadius:2}}/>}
       </div>
       {/* Columns */}
-      {layout.columns.map((col, i) => (
-        <div key={i} style={{
-          flex: col.width ? 0 : 1,
-          width: col.width ? Math.round(col.width / 12) : undefined,
-          minWidth: 8,
-          display:'flex', flexDirection:'column', gap:2,
-        }}>
-          <div style={{flex: col.bottom ? col.splitRatio ?? 0.5 : 1, background: `${PANEL_META[col.top].color}40`, borderRadius:3}}/>
-          {col.bottom && <div style={{flex: 1 - (col.splitRatio ?? 0.5), background:`${PANEL_META[col.bottom].color}40`, borderRadius:3}}/>}
-        </div>
-      ))}
+      {layout.columns.map((col, i) => {
+        const n = col.panels.length
+        const ratios = col.splitRatios && col.splitRatios.length === n - 1
+          ? [...col.splitRatios, Math.max(0.05, 1 - col.splitRatios.reduce((a, b) => a + b, 0))]
+          : Array(n).fill(1 / n)
+        return (
+          <div key={i} style={{
+            flex: col.width ? 0 : 1,
+            width: col.width ? Math.round(col.width / 12) : undefined,
+            minWidth: 8,
+            display:'flex', flexDirection:'column', gap:1,
+          }}>
+            {col.panels.map((pid, j) => (
+              <div key={pid} style={{flex: ratios[j], background: `${PANEL_META[pid].color}40`, borderRadius:3}}/>
+            ))}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -264,7 +309,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
   ]
 
   const usedPanels = new Set<PanelId>()
-  draft.columns.forEach(c => { usedPanels.add(c.top); if (c.bottom) usedPanels.add(c.bottom) })
+  draft.columns.forEach(c => c.panels.forEach(id => usedPanels.add(id)))
   if (draft.sidebarBottom) usedPanels.add(draft.sidebarBottom)
   const availablePanels = allPanelIds.filter(id => !usedPanels.has(id))
 
@@ -280,7 +325,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
   const addColumn = () => {
     const next = availablePanels[0]
     if (!next) return
-    setDraft({ ...draft, columns: [...draft.columns, { top: next, width: 360 }] })
+    setDraft({ ...draft, columns: [...draft.columns, { panels: [next], width: 360 }] })
   }
 
   const applyPreset = (layout: AppLayout) => {
@@ -297,7 +342,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
       }}
     >
       <div style={{
-        width:'min(90vw, 820px)', maxHeight:'90vh',
+        width:'min(90vw, 860px)', maxHeight:'90vh',
         background:'#131316', border:`1px solid ${BM}`,
         borderRadius:20, display:'flex', flexDirection:'column',
         overflow:'hidden', boxShadow:'0 24px 80px rgba(0,0,0,0.6)',
@@ -309,7 +354,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
             {lang === 'zh' ? '自定义排版' : 'Customize Layout'}
           </span>
           <span style={{flex:1,fontSize:11,color:'#50505A'}}>
-            {lang === 'zh' ? '拖拽面板到列中，点击 × 移除' : 'Drag panels into columns, × to remove'}
+            {lang === 'zh' ? '拖拽面板，点击"叠加面板"支持多层叠放' : 'Drag panels · click "Stack panel" to layer multiple panels'}
           </span>
           <button onClick={onClose} style={{padding:6,borderRadius:8,border:'none',background:'transparent',color:'#50505A',cursor:'pointer',display:'flex'}}
             onMouseEnter={e=>(e.currentTarget.style.color='#ECECF1')} onMouseLeave={e=>(e.currentTarget.style.color='#50505A')}>
@@ -378,7 +423,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
               background:'#0C0C0F',border:`1px solid ${B}`,
               minHeight:160,
             }}>
-              {/* Sidebar card — supports optional bottom panel */}
+              {/* Sidebar card */}
               <div style={{
                 width: Math.max(90, Math.min(110, draft.sidebarWidth / 3)),
                 flexShrink:0, display:'flex', flexDirection:'column', gap:5,
@@ -394,7 +439,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
                 <div style={{
                   borderRadius:8, padding:'6px 8px',
                   background:'rgba(255,255,255,0.03)', border:`1px solid ${B}`,
-                  display:'flex',alignItems:'center',gap:5,
+                  display:'flex',alignItems:'center',gap:5, flexShrink:0,
                 }}>
                   <span style={{fontSize:12}}>🗂</span>
                   <span style={{fontSize:10,color:'#50505A'}}>
@@ -434,6 +479,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
                   onUpdate={updated => updateColumn(idx, updated)}
                   onRemove={() => removeColumn(idx)}
                   canRemove={draft.columns.length > 1}
+                  availablePanels={availablePanels}
                 />
               ))}
 
