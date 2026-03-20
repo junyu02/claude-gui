@@ -57,7 +57,7 @@ export default defineConfig({
             req.on('data', (c: Buffer) => body += c)
             req.on('end', () => {
               try {
-                const { message, projectPath, sessionId, model } = JSON.parse(body)
+                const { message, projectPath, sessionId, model, mode } = JSON.parse(body)
                 const cwd = tildePath(projectPath)
 
                 // Kill any existing process for this project
@@ -68,12 +68,15 @@ export default defineConfig({
                   '-p',
                   '--output-format', 'stream-json',
                   '--verbose',
-                  '--dangerously-skip-permissions',
                   '--include-partial-messages',
                 ]
+                if (mode !== 'normal') args.push('--dangerously-skip-permissions')
                 if (sessionId) args.push('--resume', sessionId)
                 if (model) args.push('--model', model)
-                args.push(message)
+                const finalMessage = mode === 'plan'
+                  ? `[Plan Mode] 请只描述你的计划，不要实际创建或修改任何文件。\n\n${message}`
+                  : message
+                args.push(finalMessage)
 
                 const proc = spawn(CLAUDE_BIN, args, {
                   cwd,
@@ -299,6 +302,93 @@ export default defineConfig({
                 res.end(JSON.stringify({ ok: true }))
               } catch (e) { res.statusCode = 500; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: String(e) })) }
             })
+            return
+          }
+
+          // ── POST /api/shell → stream shell command output ──
+          if (url.startsWith('/api/shell') && req.method === 'POST') {
+            let body = ''
+            req.on('data', (c: Buffer) => body += c)
+            req.on('end', () => {
+              try {
+                const { command, cwd: rawCwd } = JSON.parse(body)
+                const cwd = tildePath(rawCwd ?? '~')
+
+                res.setHeader('Content-Type', 'text/event-stream')
+                res.setHeader('Cache-Control', 'no-cache')
+                res.setHeader('Connection', 'keep-alive')
+                res.setHeader('X-Accel-Buffering', 'no')
+
+                const proc = spawn('bash', ['-c', command], {
+                  cwd: fs.existsSync(cwd) ? cwd : os.homedir(),
+                  env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '1' },
+                  stdio: ['pipe', 'pipe', 'pipe'],
+                })
+                proc.stdin!.end()
+
+                proc.stdout!.on('data', (chunk: Buffer) => {
+                  res.write(`data: ${JSON.stringify({ type: 'stdout', text: chunk.toString() })}\n\n`)
+                })
+                proc.stderr!.on('data', (chunk: Buffer) => {
+                  res.write(`data: ${JSON.stringify({ type: 'stderr', text: chunk.toString() })}\n\n`)
+                })
+                proc.on('close', (code) => {
+                  res.write(`data: ${JSON.stringify({ type: 'done', code })}\n\n`)
+                  res.end()
+                })
+                proc.on('error', (err) => {
+                  res.write(`data: ${JSON.stringify({ type: 'stderr', text: String(err) })}\n\n`)
+                  res.end()
+                })
+                res.on('close', () => { if (!proc.killed) proc.kill('SIGTERM') })
+              } catch (e) {
+                res.statusCode = 500
+                res.end(JSON.stringify({ error: String(e) }))
+              }
+            })
+            return
+          }
+
+          // ── GET /api/mcp-status → live MCP server list ──
+          if (url.startsWith('/api/mcp-status')) {
+            res.setHeader('Content-Type', 'application/json')
+            // Try to read claude config files for MCP servers
+            const configPaths = [
+              path.join(os.homedir(), '.claude.json'),
+              path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+              path.join(os.homedir(), '.config', 'claude', 'config.json'),
+            ]
+            let mcpServers: Record<string, any> = {}
+            for (const p of configPaths) {
+              try {
+                const raw = fs.readFileSync(p, 'utf-8')
+                const cfg = JSON.parse(raw)
+                const servers = cfg.mcpServers ?? cfg.mcp_servers ?? {}
+                if (Object.keys(servers).length > 0) { mcpServers = servers; break }
+              } catch { /* try next */ }
+            }
+            // Also try running `claude mcp list` with timeout
+            try {
+              const listOutput = execSync('claude mcp list 2>/dev/null || true', {
+                encoding: 'utf-8', timeout: 3000,
+              }).trim()
+              // Parse simple text format: "name: status"
+              if (listOutput && !listOutput.startsWith('{')) {
+                for (const line of listOutput.split('\n')) {
+                  const m = line.match(/^([^\s:]+)/)
+                  if (m && !mcpServers[m[1]]) {
+                    mcpServers[m[1]] = { status: 'unknown' }
+                  }
+                }
+              }
+            } catch { /* ignore */ }
+            const result = Object.entries(mcpServers).map(([name, cfg]: [string, any]) => ({
+              name,
+              command: cfg.command ?? '',
+              args: cfg.args ?? [],
+              status: 'configured',
+            }))
+            res.end(JSON.stringify({ servers: result }))
             return
           }
 

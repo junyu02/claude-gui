@@ -85,11 +85,12 @@ export async function* streamChat(
   sessionId?: string,
   model?: string,
   signal?: AbortSignal,
+  mode?: 'trust' | 'plan' | 'normal',
 ): AsyncGenerator<ChatStreamEvent> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, projectPath, sessionId, model }),
+    body: JSON.stringify({ message, projectPath, sessionId, model, mode }),
     signal,
   })
 
