@@ -225,7 +225,10 @@ function LayoutThumb({ layout, active }: { layout: AppLayout; active: boolean })
       transition:'all 0.15s',
     }}>
       {/* Sidebar */}
-      <div style={{width:10, background:'rgba(255,255,255,0.06)', borderRadius:3}}/>
+      <div style={{width:10, display:'flex', flexDirection:'column', gap:1, borderRadius:3}}>
+        <div style={{flex: layout.sidebarBottom ? layout.sidebarSplitRatio ?? 0.55 : 1, background:'rgba(255,255,255,0.08)', borderRadius:2}}/>
+        {layout.sidebarBottom && <div style={{flex: 1-(layout.sidebarSplitRatio??0.55), background:`${PANEL_META[layout.sidebarBottom].color}50`, borderRadius:2}}/>}
+      </div>
       {/* Columns */}
       {layout.columns.map((col, i) => (
         <div key={i} style={{
@@ -262,6 +265,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
 
   const usedPanels = new Set<PanelId>()
   draft.columns.forEach(c => { usedPanels.add(c.top); if (c.bottom) usedPanels.add(c.bottom) })
+  if (draft.sidebarBottom) usedPanels.add(draft.sidebarBottom)
   const availablePanels = allPanelIds.filter(id => !usedPanels.has(id))
 
   const updateColumn = (idx: number, col: ColumnConfig) => {
@@ -374,17 +378,50 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
               background:'#0C0C0F',border:`1px solid ${B}`,
               minHeight:160,
             }}>
-              {/* Sidebar indicator */}
+              {/* Sidebar card — supports optional bottom panel */}
               <div style={{
-                width:draft.sidebarWidth / 4, minWidth:32, maxWidth:72,
-                height:140, borderRadius:10,
-                background:'rgba(255,255,255,0.03)', border:`1px solid ${B}`,
-                display:'flex',alignItems:'center',justifyContent:'center',
-                flexShrink:0,
+                width: Math.max(90, Math.min(110, draft.sidebarWidth / 3)),
+                flexShrink:0, display:'flex', flexDirection:'column', gap:5,
+                background:'#1A1A1E', border:`1px solid ${B}`,
+                borderRadius:14, padding:8,
               }}>
-                <span style={{fontSize:9,color:'#3A3A42',writingMode:'vertical-rl',textOrientation:'mixed'}}>
-                  {lang === 'zh' ? '侧边栏' : 'Sidebar'}
-                </span>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:2}}>
+                  <span style={{fontSize:9,color:'#50505A',fontFamily:'JetBrains Mono'}}>
+                    {lang === 'zh' ? '侧边栏' : 'Sidebar'}
+                  </span>
+                </div>
+                {/* Fixed file-tree top section */}
+                <div style={{
+                  borderRadius:8, padding:'6px 8px',
+                  background:'rgba(255,255,255,0.03)', border:`1px solid ${B}`,
+                  display:'flex',alignItems:'center',gap:5,
+                }}>
+                  <span style={{fontSize:12}}>🗂</span>
+                  <span style={{fontSize:10,color:'#50505A'}}>
+                    {lang === 'zh' ? '文件树' : 'Files'}
+                  </span>
+                </div>
+                {/* Split ratio when bottom is set */}
+                {draft.sidebarBottom && (
+                  <div style={{display:'flex',alignItems:'center',gap:4}}>
+                    <span style={{fontSize:9,color:'#50505A'}}>
+                      {Math.round((draft.sidebarSplitRatio ?? 0.55) * 100)}%
+                    </span>
+                    <input type="range" min={20} max={80} step={5}
+                      value={Math.round((draft.sidebarSplitRatio ?? 0.55) * 100)}
+                      onChange={e => setDraft({ ...draft, sidebarSplitRatio: Number(e.target.value) / 100 })}
+                      style={{flex:1, accentColor:'#7C5CFC', height:3}}
+                    />
+                  </div>
+                )}
+                {/* Bottom drop slot */}
+                <DropSlot
+                  panelId={draft.sidebarBottom}
+                  onDrop={id => setDraft({ ...draft, sidebarBottom: id })}
+                  onClear={() => { const { sidebarBottom: _, sidebarSplitRatio: __, ...rest } = draft; setDraft(rest as typeof draft) }}
+                  lang={lang}
+                  label={lang === 'zh' ? '+ 下方面板' : '+ Bottom panel'}
+                />
               </div>
 
               {/* Columns */}

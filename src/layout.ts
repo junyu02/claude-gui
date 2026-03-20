@@ -23,6 +23,10 @@ export interface ColumnConfig {
 
 export interface AppLayout {
   sidebarWidth: number
+  /** Optional panel stacked below the file tree in the sidebar */
+  sidebarBottom?: PanelId
+  /** Fraction of sidebar height the file-tree takes when sidebarBottom is set (0–1), default 0.55 */
+  sidebarSplitRatio?: number
   /** Ordered columns (excluding sidebar) */
   columns: ColumnConfig[]
 }

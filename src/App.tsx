@@ -281,8 +281,11 @@ export default function App() {
   // Column widths (runtime overrides, separate from layout.columns[i].width)
   const [colWidths, setColWidths] = useState<Record<number, number>>({})
 
-  // Row split ratios runtime overrides
+  // Row split ratios runtime overrides (keyed by column index; -1 = sidebar)
   const [rowRatios, setRowRatios] = useState<Record<number, number>>({})
+
+  // Sidebar bottom row resize ref
+  const sidebarRowResizeRef = useRef<{ startY: number; startRatio: number; sidebarH: number } | null>(null)
 
   // Active resize handles
   const colResizeRef = useRef<{ colIdx: number; startX: number; startW: number } | null>(null)
@@ -383,6 +386,24 @@ export default function App() {
     }
     const onUp = () => {
       rowResizeRef.current = null
+      document.body.style.cursor = ''; document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup',   onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [])
+
+  // ── Sidebar row resize ────────────────────────────────────────────
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const r = sidebarRowResizeRef.current
+      if (!r) return
+      const delta = e.clientY - r.startY
+      const newRatio = Math.max(0.2, Math.min(0.8, r.startRatio + delta / r.sidebarH))
+      setRowRatios(prev => ({ ...prev, [-1]: newRatio }))
+    }
+    const onUp = () => {
+      sidebarRowResizeRef.current = null
       document.body.style.cursor = ''; document.body.style.userSelect = ''
     }
     window.addEventListener('mousemove', onMove)
@@ -745,7 +766,9 @@ export default function App() {
       </div>
 
       {/* ── Sidebar ── */}
-      <aside style={{width:layout.sidebarWidth,flexShrink:0,display:'flex',flexDirection:'column',background:'#131316',overflow:'hidden',zIndex:1}}>
+      <aside data-sidebar style={{width:layout.sidebarWidth,flexShrink:0,display:'flex',flexDirection:'column',background:'#131316',overflow:'hidden',zIndex:1}}>
+        {/* Top section — flex-sized so it shrinks when sidebarBottom is active */}
+        <div style={{flex: layout.sidebarBottom ? (rowRatios[-1] ?? layout.sidebarSplitRatio ?? 0.55) : 1, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
         {/* Sidebar header */}
         <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 10px 12px 8px',borderBottom:`1px solid ${B}`,flexShrink:0}}>
           <div style={{width:22,height:22,borderRadius:7,background:'#7C5CFC',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
@@ -827,6 +850,37 @@ export default function App() {
             </div>
           )}
         </div>
+      </div>{/* end file-tree section */}
+
+      {/* ── Sidebar bottom panel (optional) ── */}
+      {layout.sidebarBottom && (() => {
+        const sid = layout.sidebarBottom!
+        return (
+          <>
+            <RowResizeHandle onDragStart={() => {
+              const el = document.querySelector('[data-sidebar]') as HTMLElement
+              const rect = el?.getBoundingClientRect()
+              sidebarRowResizeRef.current = {
+                startY: 0,
+                startRatio: rowRatios[-1] ?? layout.sidebarSplitRatio ?? 0.55,
+                sidebarH: rect?.height ?? 600,
+              }
+              document.body.style.cursor='row-resize'; document.body.style.userSelect='none'
+              const cap = (e: MouseEvent) => {
+                if (sidebarRowResizeRef.current) sidebarRowResizeRef.current.startY = e.clientY
+                window.removeEventListener('mousemove', cap)
+              }
+              window.addEventListener('mousemove', cap)
+            }}/>
+            <div style={{flex: 1-(rowRatios[-1] ?? layout.sidebarSplitRatio ?? 0.55), display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
+              <PanelBar id={sid} lang={lang}/>
+              <div style={{flex:1, overflow:'auto', display:'flex', flexDirection:'column'}}>
+                <PanelContent id={sid} props={sharedProps}/>
+              </div>
+            </div>
+          </>
+        )
+      })()}
       </aside>
 
       {/* ── Sidebar resize handle ── */}
