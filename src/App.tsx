@@ -26,11 +26,11 @@ import { LayoutEditor } from './components/LayoutEditor'
 import { MARKETPLACE_PLUGINS } from './plugins'
 
 // ── Resize handle (column) ────────────────────────────────────────────
-function ResizeHandle({ onDragStart, onDoubleClick }: { onDragStart: () => void; onDoubleClick: () => void }) {
+function ResizeHandle({ onDragStart, onDoubleClick }: { onDragStart: (startX: number) => void; onDoubleClick: () => void }) {
   const [hover, setHover] = useState(false)
   return (
     <div style={{width:4,flexShrink:0,cursor:'col-resize',position:'relative',background:'transparent'}}
-      onMouseDown={e=>{e.preventDefault();onDragStart()}}
+      onMouseDown={e=>{e.preventDefault();onDragStart(e.clientX)}}
       onDoubleClick={onDoubleClick}
       onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}>
       <div style={{position:'absolute',top:0,bottom:0,left:-2,right:-2,background:hover?'rgba(124,92,252,0.35)':B,transition:'background 0.15s'}}/>
@@ -39,11 +39,11 @@ function ResizeHandle({ onDragStart, onDoubleClick }: { onDragStart: () => void;
 }
 
 // ── Row resize handle (between stacked panels) ────────────────────────
-function RowResizeHandle({ onDragStart }: { onDragStart: () => void }) {
+function RowResizeHandle({ onDragStart }: { onDragStart: (startY: number) => void }) {
   const [hover, setHover] = useState(false)
   return (
     <div style={{height:4,flexShrink:0,cursor:'row-resize',position:'relative',background:'transparent'}}
-      onMouseDown={e=>{e.preventDefault();onDragStart()}}
+      onMouseDown={e=>{e.preventDefault();onDragStart(e.clientY)}}
       onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}>
       <div style={{position:'absolute',left:0,right:0,top:-2,bottom:-2,background:hover?'rgba(124,92,252,0.35)':B,transition:'background 0.15s'}}/>
     </div>
@@ -416,9 +416,19 @@ export default function App() {
       const r = colResizeRef.current
       if (!r) return
       const delta = e.clientX - r.startX
-      setColWidths(prev => ({ ...prev, [r.colIdx]: Math.max(180, r.startW + delta) }))
+      const newW = Math.max(160, r.startW + delta)
+      if (r.colIdx === -1) {
+        // Sidebar: update layout directly so aside uses it
+        setLayout(prev => ({ ...prev, sidebarWidth: newW }))
+      } else {
+        setColWidths(prev => ({ ...prev, [r.colIdx]: newW }))
+      }
     }
     const onUp = () => {
+      if (colResizeRef.current?.colIdx === -1) {
+        // Persist sidebar width to localStorage on release
+        setLayout(prev => { saveLayout(prev); return prev })
+      }
       colResizeRef.current = null
       document.body.style.cursor = ''; document.body.style.userSelect = ''
     }
@@ -904,20 +914,15 @@ export default function App() {
 
         return (
           <>
-            <RowResizeHandle onDragStart={() => {
+            <RowResizeHandle onDragStart={startY => {
               const el = document.querySelector('[data-sidebar]') as HTMLElement
               const rect = el?.getBoundingClientRect()
               sidebarRowResizeRef.current = {
-                startY: 0,
+                startY,
                 startRatio: topRatio,
                 sidebarH: rect?.height ?? 600,
               }
               document.body.style.cursor='row-resize'; document.body.style.userSelect='none'
-              const cap = (e: MouseEvent) => {
-                if (sidebarRowResizeRef.current) sidebarRowResizeRef.current.startY = e.clientY
-                window.removeEventListener('mousemove', cap)
-              }
-              window.addEventListener('mousemove', cap)
             }}/>
             <div style={{flex: 1 - topRatio, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
               {renderBottomContent()}
@@ -929,11 +934,10 @@ export default function App() {
 
       {/* ── Sidebar resize handle ── */}
       <ResizeHandle
-        onDragStart={() => {
+        onDragStart={startX => {
+          const startW = layout.sidebarWidth
+          colResizeRef.current = { colIdx: -1, startX, startW }
           document.body.style.cursor='col-resize'; document.body.style.userSelect='none'
-          // save new sidebarWidth on mouseup via a one-time handler
-          const onUp = () => { document.body.style.cursor=''; document.body.style.userSelect=''; window.removeEventListener('mouseup', onUp) }
-          window.addEventListener('mouseup', onUp)
         }}
         onDoubleClick={() => applyLayout({ ...layout, sidebarWidth: 240 })}
       />
@@ -985,17 +989,15 @@ export default function App() {
                 return col.panels.map((panelId, pIdx) => (
                   <React.Fragment key={panelId}>
                     {pIdx > 0 && (
-                      <RowResizeHandle onDragStart={() => {
+                      <RowResizeHandle onDragStart={startY => {
                         const el = document.querySelector(`[data-col="${colIdx}"]`) as HTMLElement
                         const rect = el?.getBoundingClientRect()
                         rowResizeRef.current = {
                           colIdx, handleIdx: pIdx - 1,
-                          startY: 0, startRatios: getRatios(col, colIdx),
+                          startY, startRatios: getRatios(col, colIdx),
                           colHeight: rect?.height ?? 600,
                         }
                         document.body.style.cursor='row-resize'; document.body.style.userSelect='none'
-                        const cap = (e: MouseEvent) => { if (rowResizeRef.current) rowResizeRef.current.startY = e.clientY; window.removeEventListener('mousemove', cap) }
-                        window.addEventListener('mousemove', cap)
                       }}/>
                     )}
                     <div style={{flex: ratios[pIdx], display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
@@ -1010,12 +1012,10 @@ export default function App() {
             </div>
             {!isLast && (
               <ResizeHandle
-                onDragStart={() => {
+                onDragStart={startX => {
                   const startW = colWidths[colIdx] ?? col.width ?? 360
-                  colResizeRef.current = { colIdx, startX: 0, startW }
+                  colResizeRef.current = { colIdx, startX, startW }
                   document.body.style.cursor='col-resize'; document.body.style.userSelect='none'
-                  const cap = (e: MouseEvent) => { if (colResizeRef.current) colResizeRef.current.startX = e.clientX; window.removeEventListener('mousemove', cap) }
-                  window.addEventListener('mousemove', cap)
                 }}
                 onDoubleClick={() => {
                   setColWidths(prev => { const next = {...prev}; delete next[colIdx]; return next })
