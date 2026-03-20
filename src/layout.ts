@@ -10,25 +10,30 @@ export type PanelId =
   | 'plugins'
   | 'progress'
 
+export type PanelMode = 'split' | 'tabs'
+
 export interface ColumnConfig {
   /** Ordered panels top→bottom, min length 1 */
   panels: PanelId[]
   /**
-   * Height fractions for panels[0..N-2].
+   * Height fractions for panels[0..N-2] (split mode only).
    * panels[N-1] gets the remainder: 1 - sum(splitRatios).
-   * Length must equal panels.length - 1.
    * When omitted, panels are equally sized.
    */
   splitRatios?: number[]
   /** Pixel width of this column. undefined = flex:1 (takes remaining space) */
   width?: number
+  /** 'split' = panels divided vertically, 'tabs' = browser-like tab bar. Default: 'split' */
+  mode?: PanelMode
 }
 
 export interface AppLayout {
   sidebarWidth: number
-  /** Optional panel stacked below the file tree in the sidebar */
-  sidebarBottom?: PanelId
-  /** Fraction of sidebar height the file-tree takes when sidebarBottom is set (0–1), default 0.55 */
+  /** Panels in the bottom section of the sidebar (length >= 1 = show bottom section) */
+  sidebarBottomPanels?: PanelId[]
+  /** 'split' = panels divided vertically, 'tabs' = tab bar. Default: 'split' */
+  sidebarMode?: PanelMode
+  /** Fraction of sidebar height the file-tree takes when sidebarBottomPanels is set (0–1), default 0.45 */
   sidebarSplitRatio?: number
   /** Ordered columns (excluding sidebar) */
   columns: ColumnConfig[]
@@ -134,7 +139,7 @@ export function migrateLayout(raw: any): AppLayout {
   if (!raw || typeof raw !== 'object') return LAYOUT_PRESETS[0].layout
 
   const migrateCol = (c: any): ColumnConfig => {
-    // Already v3 format
+    // Already v3+ format
     if (Array.isArray(c.panels)) return c as ColumnConfig
     // v2 format: {top, bottom?, splitRatio?, width?}
     const panels: PanelId[] = [c.top, ...(c.bottom ? [c.bottom] : [])]
@@ -146,9 +151,16 @@ export function migrateLayout(raw: any): AppLayout {
     }
   }
 
+  // Migrate sidebarBottom (old single panel) → sidebarBottomPanels
+  const sidebarBottomPanels: PanelId[] | undefined =
+    Array.isArray(raw.sidebarBottomPanels) ? raw.sidebarBottomPanels
+    : raw.sidebarBottom ? [raw.sidebarBottom]
+    : undefined
+
   return {
     sidebarWidth: raw.sidebarWidth ?? 240,
-    ...(raw.sidebarBottom ? { sidebarBottom: raw.sidebarBottom } : {}),
+    ...(sidebarBottomPanels ? { sidebarBottomPanels } : {}),
+    ...(raw.sidebarMode ? { sidebarMode: raw.sidebarMode } : {}),
     ...(raw.sidebarSplitRatio != null ? { sidebarSplitRatio: raw.sidebarSplitRatio } : {}),
     columns: Array.isArray(raw.columns) ? raw.columns.map(migrateCol) : LAYOUT_PRESETS[0].layout.columns,
   }

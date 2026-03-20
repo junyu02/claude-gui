@@ -13,7 +13,7 @@ import { loadRegistry, saveRegistry, ensureGuiDir, loadHistory, appendHistory,
   loadContext, generateContext, hasGsdPlanning, trackCommand,
   HistoryEntry, ProjectContext } from './storage'
 import { readDir, readFileContent, streamChat, abortChat } from './api'
-import { AppLayout, ColumnConfig, PanelId, PANEL_META, loadLayout, saveLayout } from './layout'
+import { AppLayout, ColumnConfig, PanelId, PANEL_META, PanelMode, loadLayout, saveLayout } from './layout'
 
 // ── Components ────────────────────────────────────────────────────────
 import { MarkdownPreview } from './components/MarkdownPreview'
@@ -46,6 +46,40 @@ function RowResizeHandle({ onDragStart }: { onDragStart: () => void }) {
       onMouseDown={e=>{e.preventDefault();onDragStart()}}
       onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}>
       <div style={{position:'absolute',left:0,right:0,top:-2,bottom:-2,background:hover?'rgba(124,92,252,0.35)':B,transition:'background 0.15s'}}/>
+    </div>
+  )
+}
+
+// ── Tab bar (browser-like panel tabs) ────────────────────────────────
+function TabBar({ panels, activeIdx, onChange, lang }: {
+  panels: PanelId[]; activeIdx: number; onChange: (i: number) => void; lang: Lang
+}) {
+  return (
+    <div style={{display:'flex', gap:1, padding:'4px 6px 0', borderBottom:`1px solid ${B}`, flexShrink:0, background:'#131316', overflowX:'auto'}}>
+      {panels.map((id, i) => {
+        const m = PANEL_META[id]
+        const active = i === activeIdx
+        return (
+          <button key={id} onClick={() => onChange(i)} style={{
+            display:'flex', alignItems:'center', gap:4,
+            padding:'5px 12px', borderRadius:'6px 6px 0 0',
+            border:`1px solid ${active ? B : 'transparent'}`,
+            borderBottom: active ? `1px solid #0C0C0F` : 'none',
+            background: active ? '#0C0C0F' : 'transparent',
+            color: active ? m.color : '#50505A',
+            fontSize:11, fontWeight:600, cursor:'pointer',
+            whiteSpace:'nowrap', flexShrink:0,
+            transition:'all 0.12s',
+            marginBottom: active ? -1 : 0,
+          }}
+            onMouseEnter={e => { if (!active) e.currentTarget.style.color = '#8B8B96' }}
+            onMouseLeave={e => { if (!active) e.currentTarget.style.color = '#50505A' }}
+          >
+            <span style={{fontSize:13}}>{m.emoji}</span>
+            {lang === 'zh' ? m.label : m.labelEn}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -281,6 +315,12 @@ export default function App() {
   // Column widths (runtime overrides, separate from layout.columns[i].width)
   const [colWidths, setColWidths] = useState<Record<number, number>>({})
 
+  // Active tab index per column (for tab mode)
+  const [activeTabs, setActiveTabs] = useState<Record<number, number>>({})
+
+  // Active tab index in sidebar bottom (for sidebar tab mode)
+  const [sidebarActiveTab, setSidebarActiveTab] = useState(0)
+
   // Per-column panel ratios: Record<colIdx, number[]> — array of N fractions summing to 1
   const [panelRatios, setPanelRatios] = useState<Record<number, number[]>>({})
 
@@ -311,6 +351,8 @@ export default function App() {
     setColWidths({})
     setPanelRatios({})
     setSidebarRatio(null)
+    setActiveTabs({})
+    setSidebarActiveTab(0)
   }
 
   // ── Load registry ─────────────────────────────────────────────────
@@ -743,8 +785,8 @@ export default function App() {
 
       {/* ── Sidebar ── */}
       <aside data-sidebar style={{width:layout.sidebarWidth,flexShrink:0,display:'flex',flexDirection:'column',background:'#131316',overflow:'hidden',zIndex:1}}>
-        {/* Top section — flex-sized so it shrinks when sidebarBottom is active */}
-        <div style={{flex: layout.sidebarBottom ? (sidebarRatio ?? layout.sidebarSplitRatio ?? 0.55) : 1, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
+        {/* Top section — flex-sized so it shrinks when sidebarBottomPanels is active */}
+        <div style={{flex: (layout.sidebarBottomPanels?.length ?? 0) > 0 ? (sidebarRatio ?? layout.sidebarSplitRatio ?? 0.45) : 1, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
         {/* Sidebar header */}
         <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 10px 12px 8px',borderBottom:`1px solid ${B}`,flexShrink:0}}>
           <div style={{width:22,height:22,borderRadius:7,background:'#7C5CFC',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
@@ -828,10 +870,38 @@ export default function App() {
         </div>
       </div>{/* end file-tree section */}
 
-      {/* ── Sidebar bottom panel (optional) ── */}
-      {layout.sidebarBottom && (() => {
-        const sid = layout.sidebarBottom!
-        const topRatio = sidebarRatio ?? layout.sidebarSplitRatio ?? 0.55
+      {/* ── Sidebar bottom panels (optional) ── */}
+      {layout.sidebarBottomPanels && layout.sidebarBottomPanels.length > 0 && (() => {
+        const bPanels = layout.sidebarBottomPanels!
+        const sMode = layout.sidebarMode ?? 'split'
+        const topRatio = sidebarRatio ?? layout.sidebarSplitRatio ?? 0.45
+
+        const renderBottomContent = () => {
+          if (sMode === 'tabs' && bPanels.length > 1) {
+            const activeIdx = Math.min(sidebarActiveTab, bPanels.length - 1)
+            return (
+              <>
+                <TabBar panels={bPanels} activeIdx={activeIdx} onChange={setSidebarActiveTab} lang={lang}/>
+                <div style={{flex:1, overflow:'auto', display:'flex', flexDirection:'column'}}>
+                  <PanelContent id={bPanels[activeIdx]} props={sharedProps}/>
+                </div>
+              </>
+            )
+          }
+          // Split mode: single panel or multiple split
+          return bPanels.map((sid, i) => (
+            <React.Fragment key={sid}>
+              {i > 0 && <div style={{height:1, background:B, flexShrink:0}}/>}
+              <div style={{flex: 1 / bPanels.length, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
+                <PanelBar id={sid} lang={lang}/>
+                <div style={{flex:1, overflow:'auto', display:'flex', flexDirection:'column'}}>
+                  <PanelContent id={sid} props={sharedProps}/>
+                </div>
+              </div>
+            </React.Fragment>
+          ))
+        }
+
         return (
           <>
             <RowResizeHandle onDragStart={() => {
@@ -850,10 +920,7 @@ export default function App() {
               window.addEventListener('mousemove', cap)
             }}/>
             <div style={{flex: 1 - topRatio, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
-              <PanelBar id={sid} lang={lang}/>
-              <div style={{flex:1, overflow:'auto', display:'flex', flexDirection:'column'}}>
-                <PanelContent id={sid} props={sharedProps}/>
-              </div>
+              {renderBottomContent()}
             </div>
           </>
         )
@@ -890,6 +957,30 @@ export default function App() {
               }}
             >
               {(() => {
+                const mode = col.mode ?? 'split'
+
+                if (mode === 'tabs' && col.panels.length > 1) {
+                  // ── Tab mode ──────────────────────────────────────
+                  const activeIdx = Math.min(activeTabs[colIdx] ?? 0, col.panels.length - 1)
+                  const panelId = col.panels[activeIdx]
+                  return (
+                    <>
+                      <TabBar
+                        panels={col.panels}
+                        activeIdx={activeIdx}
+                        onChange={i => setActiveTabs(prev => ({ ...prev, [colIdx]: i }))}
+                        lang={lang}
+                      />
+                      <div style={{flex:1, display:'flex', flexDirection:'column', minHeight:0, overflow:'hidden'}}>
+                        <div style={{flex:1, overflow:'auto', display:'flex', flexDirection:'column'}}>
+                          {panelId === 'chat' ? renderChatPanel() : <PanelContent id={panelId} props={sharedProps}/>}
+                        </div>
+                      </div>
+                    </>
+                  )
+                }
+
+                // ── Split mode (default) ───────────────────────────
                 const ratios = getRatios(col, colIdx)
                 return col.panels.map((panelId, pIdx) => (
                   <React.Fragment key={panelId}>

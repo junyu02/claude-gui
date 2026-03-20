@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react'
 import { X, Plus, Trash2, LayoutGrid, ChevronRight } from 'lucide-react'
 import { B, BM, Lang } from '../types'
 import {
-  AppLayout, ColumnConfig, PanelId, PANEL_META, LAYOUT_PRESETS,
+  AppLayout, ColumnConfig, PanelId, PanelMode, PANEL_META, LAYOUT_PRESETS,
 } from '../layout'
 
 // ── Panel pill (in palette and in slots) ─────────────────────────────
@@ -61,7 +61,7 @@ function DropSlot({ panelId, onDrop, onClear, lang, height, label }: {
       style={{
         flex: height ? undefined : 1,
         height: height,
-        minHeight: 44,
+        minHeight: 40,
         borderRadius:10,
         border: dragOver
           ? '2px dashed rgba(124,92,252,0.6)'
@@ -113,6 +113,33 @@ function DropSlot({ panelId, onDrop, onClear, lang, height, label }: {
   )
 }
 
+// ── Mode toggle ───────────────────────────────────────────────────────
+function ModeToggle({ mode, onChange, lang }: {
+  mode: PanelMode; onChange: (m: PanelMode) => void; lang: Lang
+}) {
+  return (
+    <div style={{display:'flex', borderRadius:6, overflow:'hidden', border:`1px solid ${B}`, flexShrink:0}}>
+      {(['split', 'tabs'] as PanelMode[]).map(m => (
+        <button
+          key={m}
+          onClick={() => onChange(m)}
+          style={{
+            flex:1, padding:'3px 6px', border:'none',
+            background: mode === m ? 'rgba(124,92,252,0.15)' : 'transparent',
+            color: mode === m ? '#9B82FF' : '#50505A',
+            fontSize:9, fontWeight:600, cursor:'pointer',
+            transition:'all 0.12s',
+          }}
+        >
+          {m === 'split'
+            ? (lang === 'zh' ? '⊟ 分割' : '⊟ Split')
+            : (lang === 'zh' ? '⊞ 标签' : '⊞ Tabs')}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ── Column card in canvas ─────────────────────────────────────────────
 function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove, availablePanels }: {
   col: ColumnConfig
@@ -123,16 +150,16 @@ function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove, availabl
   canRemove: boolean
   availablePanels: PanelId[]
 }) {
+  const mode = col.mode ?? 'split'
+
   const setPanel = (i: number, id: PanelId) => {
     if (col.panels.includes(id)) return
-    const panels = [...col.panels]
-    panels[i] = id
+    const panels = [...col.panels]; panels[i] = id
     onUpdate({ ...col, panels })
   }
 
   const clearSlot = (i: number) => {
     const panels = col.panels.filter((_, j) => j !== i)
-    // Reset ratios to equal when panel count changes
     onUpdate({ ...col, panels, splitRatios: undefined })
   }
 
@@ -151,10 +178,8 @@ function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove, availabl
     onUpdate({ ...col, splitRatios: ratios })
   }
 
-  const getRatioForSlider = (i: number): number => {
-    const n = col.panels.length
-    return col.splitRatios?.[i] ?? 1 / n
-  }
+  const getRatioForSlider = (i: number) =>
+    col.splitRatios?.[i] ?? 1 / col.panels.length
 
   const setWidth = (w: number | undefined) => onUpdate({ ...col, width: w })
   const widthLabel = col.width === undefined
@@ -167,7 +192,7 @@ function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove, availabl
     <div style={{
       display:'flex', flexDirection:'column', gap:5,
       background:'#1A1A1E', border:`1px solid ${B}`,
-      borderRadius:14, padding:10, minWidth:120, width:140,
+      borderRadius:14, padding:10, minWidth:128, width:148,
       flexShrink:0,
     }}>
       {/* Column header */}
@@ -184,7 +209,16 @@ function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove, availabl
         )}
       </div>
 
-      {/* N panel slots with ratio sliders between them */}
+      {/* Mode toggle */}
+      {col.panels.length >= 1 && (
+        <ModeToggle
+          mode={mode}
+          onChange={m => onUpdate({ ...col, mode: m })}
+          lang={lang}
+        />
+      )}
+
+      {/* N panel slots */}
       {col.panels.map((panelId, i) => (
         <React.Fragment key={i}>
           <DropSlot
@@ -194,8 +228,8 @@ function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove, availabl
             lang={lang}
             label={i === 0 ? (lang === 'zh' ? '主面板' : 'Main') : (lang === 'zh' ? '拖入面板' : 'Drop panel')}
           />
-          {/* Ratio slider between this slot and the next */}
-          {i < col.panels.length - 1 && (
+          {/* Split ratio slider — only in split mode, not after last slot */}
+          {mode === 'split' && i < col.panels.length - 1 && (
             <div style={{display:'flex', alignItems:'center', gap:4}}>
               <span style={{fontSize:9, color:'#50505A', minWidth:24, textAlign:'right'}}>
                 {Math.round(getRatioForSlider(i) * 100)}%
@@ -226,7 +260,9 @@ function ColumnCard({ col, colIdx, lang, onUpdate, onRemove, canRemove, availabl
           onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,0.1)';e.currentTarget.style.color='#3A3A42'}}
         >
           <Plus size={10}/>
-          {lang === 'zh' ? '叠加面板' : 'Stack panel'}
+          {mode === 'tabs'
+            ? (lang === 'zh' ? '添加标签' : 'Add tab')
+            : (lang === 'zh' ? '叠加面板' : 'Stack panel')}
         </button>
       )}
 
@@ -264,8 +300,10 @@ function LayoutThumb({ layout, active }: { layout: AppLayout; active: boolean })
     }}>
       {/* Sidebar */}
       <div style={{width:10, display:'flex', flexDirection:'column', gap:1, borderRadius:3}}>
-        <div style={{flex: layout.sidebarBottom ? layout.sidebarSplitRatio ?? 0.55 : 1, background:'rgba(255,255,255,0.08)', borderRadius:2}}/>
-        {layout.sidebarBottom && <div style={{flex: 1-(layout.sidebarSplitRatio??0.55), background:`${PANEL_META[layout.sidebarBottom].color}50`, borderRadius:2}}/>}
+        <div style={{flex: (layout.sidebarBottomPanels?.length ?? 0) > 0 ? layout.sidebarSplitRatio ?? 0.45 : 1, background:'rgba(255,255,255,0.08)', borderRadius:2}}/>
+        {(layout.sidebarBottomPanels?.length ?? 0) > 0 && (
+          <div style={{flex: 1-(layout.sidebarSplitRatio??0.45), background:`${PANEL_META[layout.sidebarBottomPanels![0]].color}50`, borderRadius:2}}/>
+        )}
       </div>
       {/* Columns */}
       {layout.columns.map((col, i) => {
@@ -280,9 +318,19 @@ function LayoutThumb({ layout, active }: { layout: AppLayout; active: boolean })
             minWidth: 8,
             display:'flex', flexDirection:'column', gap:1,
           }}>
-            {col.panels.map((pid, j) => (
-              <div key={pid} style={{flex: ratios[j], background: `${PANEL_META[pid].color}40`, borderRadius:3}}/>
-            ))}
+            {col.mode === 'tabs' && n > 1
+              ? (
+                <>
+                  <div style={{height:4, background:'rgba(124,92,252,0.3)', borderRadius:'2px 2px 0 0', display:'flex', gap:1}}>
+                    {col.panels.map(pid => <div key={pid} style={{flex:1, background:`${PANEL_META[pid].color}60`, borderRadius:1}}/>)}
+                  </div>
+                  <div style={{flex:1, background:`${PANEL_META[col.panels[0]].color}40`, borderRadius:'0 0 3px 3px'}}/>
+                </>
+              )
+              : col.panels.map((pid, j) => (
+                <div key={pid} style={{flex: ratios[j], background: `${PANEL_META[pid].color}40`, borderRadius:3}}/>
+              ))
+            }
           </div>
         )
       })}
@@ -310,17 +358,15 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
 
   const usedPanels = new Set<PanelId>()
   draft.columns.forEach(c => c.panels.forEach(id => usedPanels.add(id)))
-  if (draft.sidebarBottom) usedPanels.add(draft.sidebarBottom)
+  draft.sidebarBottomPanels?.forEach(id => usedPanels.add(id))
   const availablePanels = allPanelIds.filter(id => !usedPanels.has(id))
 
   const updateColumn = (idx: number, col: ColumnConfig) => {
-    const cols = [...draft.columns]
-    cols[idx] = col
+    const cols = [...draft.columns]; cols[idx] = col
     setDraft({ ...draft, columns: cols })
   }
   const removeColumn = (idx: number) => {
-    const cols = draft.columns.filter((_, i) => i !== idx)
-    setDraft({ ...draft, columns: cols })
+    setDraft({ ...draft, columns: draft.columns.filter((_, i) => i !== idx) })
   }
   const addColumn = () => {
     const next = availablePanels[0]
@@ -328,9 +374,32 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
     setDraft({ ...draft, columns: [...draft.columns, { panels: [next], width: 360 }] })
   }
 
-  const applyPreset = (layout: AppLayout) => {
-    setDraft(JSON.parse(JSON.stringify(layout)))
+  // Sidebar bottom panel helpers
+  const addSidebarPanel = () => {
+    const next = availablePanels[0]
+    if (!next) return
+    setDraft({ ...draft, sidebarBottomPanels: [...(draft.sidebarBottomPanels ?? []), next] })
   }
+  const removeSidebarPanel = (i: number) => {
+    const panels = (draft.sidebarBottomPanels ?? []).filter((_, j) => j !== i)
+    if (panels.length === 0) {
+      const { sidebarBottomPanels: _, sidebarMode: __, sidebarSplitRatio: ___, ...rest } = draft
+      setDraft(rest as typeof draft)
+    } else {
+      setDraft({ ...draft, sidebarBottomPanels: panels })
+    }
+  }
+  const setSidebarPanel = (i: number, id: PanelId) => {
+    if ((draft.sidebarBottomPanels ?? []).includes(id)) return
+    const panels = [...(draft.sidebarBottomPanels ?? [])]
+    panels[i] = id
+    setDraft({ ...draft, sidebarBottomPanels: panels })
+  }
+
+  const applyPreset = (layout: AppLayout) => setDraft(JSON.parse(JSON.stringify(layout)))
+
+  const sbPanels = draft.sidebarBottomPanels ?? []
+  const sbMode = draft.sidebarMode ?? 'split'
 
   return (
     <div
@@ -342,7 +411,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
       }}
     >
       <div style={{
-        width:'min(90vw, 860px)', maxHeight:'90vh',
+        width:'min(92vw, 900px)', maxHeight:'90vh',
         background:'#131316', border:`1px solid ${BM}`,
         borderRadius:20, display:'flex', flexDirection:'column',
         overflow:'hidden', boxShadow:'0 24px 80px rgba(0,0,0,0.6)',
@@ -354,7 +423,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
             {lang === 'zh' ? '自定义排版' : 'Customize Layout'}
           </span>
           <span style={{flex:1,fontSize:11,color:'#50505A'}}>
-            {lang === 'zh' ? '拖拽面板，点击"叠加面板"支持多层叠放' : 'Drag panels · click "Stack panel" to layer multiple panels'}
+            {lang === 'zh' ? '拖拽面板 · 叠加 · 切换分割/标签模式' : 'Drag panels · stack · toggle split / tab mode'}
           </span>
           <button onClick={onClose} style={{padding:6,borderRadius:8,border:'none',background:'transparent',color:'#50505A',cursor:'pointer',display:'flex'}}
             onMouseEnter={e=>(e.currentTarget.style.color='#ECECF1')} onMouseLeave={e=>(e.currentTarget.style.color='#50505A')}>
@@ -425,7 +494,7 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
             }}>
               {/* Sidebar card */}
               <div style={{
-                width: Math.max(90, Math.min(110, draft.sidebarWidth / 3)),
+                width: Math.max(96, Math.min(116, draft.sidebarWidth / 3)),
                 flexShrink:0, display:'flex', flexDirection:'column', gap:5,
                 background:'#1A1A1E', border:`1px solid ${B}`,
                 borderRadius:14, padding:8,
@@ -446,27 +515,72 @@ export function LayoutEditor({ current, lang, hasPlanningDir, onApply, onClose }
                     {lang === 'zh' ? '文件树' : 'Files'}
                   </span>
                 </div>
-                {/* Split ratio when bottom is set */}
-                {draft.sidebarBottom && (
-                  <div style={{display:'flex',alignItems:'center',gap:4}}>
-                    <span style={{fontSize:9,color:'#50505A'}}>
-                      {Math.round((draft.sidebarSplitRatio ?? 0.55) * 100)}%
-                    </span>
-                    <input type="range" min={20} max={80} step={5}
-                      value={Math.round((draft.sidebarSplitRatio ?? 0.55) * 100)}
-                      onChange={e => setDraft({ ...draft, sidebarSplitRatio: Number(e.target.value) / 100 })}
-                      style={{flex:1, accentColor:'#7C5CFC', height:3}}
-                    />
-                  </div>
+
+                {/* Sidebar bottom panels */}
+                {sbPanels.length > 0 && (
+                  <>
+                    {/* Mode toggle for sidebar (only shown when 2+ panels) */}
+                    {sbPanels.length >= 2 && (
+                      <>
+                        <div style={{fontSize:9,color:'#50505A',textAlign:'center'}}>
+                          {Math.round((draft.sidebarSplitRatio ?? 0.45) * 100)}%
+                        </div>
+                        {sbMode === 'split' && (
+                          <input type="range" min={20} max={80} step={5}
+                            value={Math.round((draft.sidebarSplitRatio ?? 0.45) * 100)}
+                            onChange={e => setDraft({ ...draft, sidebarSplitRatio: Number(e.target.value) / 100 })}
+                            style={{accentColor:'#7C5CFC', height:3}}
+                          />
+                        )}
+                        <ModeToggle
+                          mode={sbMode}
+                          onChange={m => setDraft({ ...draft, sidebarMode: m })}
+                          lang={lang}
+                        />
+                      </>
+                    )}
+                    {sbPanels.length === 1 && (
+                      <div style={{display:'flex', alignItems:'center', gap:4}}>
+                        <span style={{fontSize:9, color:'#50505A'}}>
+                          {Math.round((draft.sidebarSplitRatio ?? 0.45) * 100)}%
+                        </span>
+                        <input type="range" min={20} max={80} step={5}
+                          value={Math.round((draft.sidebarSplitRatio ?? 0.45) * 100)}
+                          onChange={e => setDraft({ ...draft, sidebarSplitRatio: Number(e.target.value) / 100 })}
+                          style={{flex:1, accentColor:'#7C5CFC', height:3}}
+                        />
+                      </div>
+                    )}
+                    {sbPanels.map((pid, i) => (
+                      <DropSlot
+                        key={i}
+                        panelId={pid}
+                        onDrop={id => setSidebarPanel(i, id)}
+                        onClear={() => removeSidebarPanel(i)}
+                        lang={lang}
+                      />
+                    ))}
+                  </>
                 )}
-                {/* Bottom drop slot */}
-                <DropSlot
-                  panelId={draft.sidebarBottom}
-                  onDrop={id => setDraft({ ...draft, sidebarBottom: id })}
-                  onClear={() => { const { sidebarBottom: _, sidebarSplitRatio: __, ...rest } = draft; setDraft(rest as typeof draft) }}
-                  lang={lang}
-                  label={lang === 'zh' ? '+ 下方面板' : '+ Bottom panel'}
-                />
+
+                {/* Add sidebar bottom panel button */}
+                {availablePanels.length > 0 && (
+                  <button
+                    onClick={addSidebarPanel}
+                    style={{
+                      display:'flex', alignItems:'center', justifyContent:'center', gap:3,
+                      padding:'4px 6px', borderRadius:7, flexShrink:0,
+                      border:`1.5px dashed rgba(255,255,255,0.1)`,
+                      background:'transparent', color:'#3A3A42',
+                      fontSize:9, cursor:'pointer', transition:'all 0.15s',
+                    }}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(124,92,252,0.35)';e.currentTarget.style.color='#9B82FF'}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,0.1)';e.currentTarget.style.color='#3A3A42'}}
+                  >
+                    <Plus size={9}/>
+                    {lang === 'zh' ? '下方面板' : 'Bottom panel'}
+                  </button>
+                )}
               </div>
 
               {/* Columns */}
